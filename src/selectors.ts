@@ -1,6 +1,7 @@
 import { minimatch } from "minimatch";
 import { parseAllDocuments } from "yaml";
 
+import { HelmAppVersionResolver } from "./helm.js";
 import type { RepositoryReader, ValueSelector } from "./types.js";
 
 const maxMatchingFiles = 256;
@@ -10,6 +11,7 @@ export async function resolveSelector(
   reader: RepositoryReader,
   ref: string,
   selector: ValueSelector,
+  helmResolver?: HelmAppVersionResolver,
 ): Promise<string[]> {
   const repositoryFiles = await reader.listFiles(ref);
   const matchingFiles = repositoryFiles.filter((file) =>
@@ -69,6 +71,14 @@ export async function resolveSelector(
     }
   }
 
+  const helm = selector.helm;
+  if (helm) {
+    const resolver = helmResolver ?? new HelmAppVersionResolver();
+    const applicationVersions = await Promise.all(
+      values.map((version) => resolver.resolve(helm, version)),
+    );
+    return [...new Set(applicationVersions)];
+  }
   return values;
 }
 

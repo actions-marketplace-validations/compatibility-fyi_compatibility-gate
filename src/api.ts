@@ -6,6 +6,7 @@ import type {
   CompatibilityCheckResponse,
   CompatibilitySource,
   CompatibilityStatus,
+  CompatibilityUnknownReason,
   ConfidenceLevel,
 } from "./types.js";
 
@@ -120,6 +121,28 @@ function validateResponse(
     validateDate(lastVerified, "API response lastVerified");
   }
   const basis = optionalNullableString(response.basis, "API response basis");
+  const reason = optionalNullableString(response.reason, "API response reason");
+  if (
+    reason !== null &&
+    ![
+      "project-not-found",
+      "project-version-not-found",
+      "dependency-not-found",
+      "dependency-version-not-covered",
+      "recommendation-only",
+      "bundle-only",
+      "explicitly-unknown",
+    ].includes(reason)
+  ) {
+    throw new Error(
+      "API response reason must identify a known unknown-result reason or be null",
+    );
+  }
+  if (reason !== null && response.compatible !== "unknown") {
+    throw new Error(
+      "API response reason is only valid for unknown compatibility",
+    );
+  }
   if (
     basis !== null &&
     !["supported", "tested", "recommended", "bundled"].includes(basis)
@@ -168,6 +191,7 @@ function validateResponse(
   return {
     ...request,
     compatible: response.compatible as CompatibilityStatus,
+    reason: reason as CompatibilityUnknownReason | null,
     matchedRange,
     matchedConstraint,
     basis: basis as CompatibilityBasis | null,

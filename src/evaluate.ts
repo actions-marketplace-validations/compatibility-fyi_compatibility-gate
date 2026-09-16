@@ -1,5 +1,6 @@
 import type { CompatibilityCheckRequest } from "./api.js";
 import { resolveSelector } from "./selectors.js";
+import { HelmAppVersionResolver } from "./helm.js";
 import type {
   BranchEvaluation,
   CheckDecision,
@@ -42,10 +43,21 @@ export async function evaluateBranch(
   configuration: GateConfiguration,
   checker: CompatibilityChecker,
   now = new Date(),
+  helmResolver = new HelmAppVersionResolver(),
 ): Promise<BranchEvaluation> {
   const gates: GateEvaluation[] = [];
   for (const gate of configuration.gates) {
-    gates.push(await evaluateGate(gate, baseRef, sha, reader, checker, now));
+    gates.push(
+      await evaluateGate(
+        gate,
+        baseRef,
+        sha,
+        reader,
+        checker,
+        now,
+        helmResolver,
+      ),
+    );
   }
 
   const decisions = gates.flatMap((gate) => gate.decisions);
@@ -70,6 +82,7 @@ async function evaluateGate(
   reader: RepositoryReader,
   checker: CompatibilityChecker,
   now: Date,
+  helmResolver: HelmAppVersionResolver,
 ): Promise<GateEvaluation> {
   let baseProjectVersions: string[];
   let headProjectVersions: string[];
@@ -82,10 +95,10 @@ async function evaluateGate(
       baseDependencyVersions,
       headDependencyVersions,
     ] = await Promise.all([
-      resolveSelector(reader, baseRef, gate.project.version),
-      resolveSelector(reader, headRef, gate.project.version),
-      resolveSelector(reader, baseRef, gate.dependency.versions),
-      resolveSelector(reader, headRef, gate.dependency.versions),
+      resolveSelector(reader, baseRef, gate.project.version, helmResolver),
+      resolveSelector(reader, headRef, gate.project.version, helmResolver),
+      resolveSelector(reader, baseRef, gate.dependency.versions, helmResolver),
+      resolveSelector(reader, headRef, gate.dependency.versions, helmResolver),
     ]);
   } catch (error) {
     return gateConfigurationError(gate, errorMessage(error));
@@ -190,7 +203,7 @@ async function evaluateCheck(
     return {
       ...base,
       state: policyOutcomes[policy].state,
-      message: `${gate.id}: unknown compatibility ${policyOutcomes[policy].label}${response.basis === "recommended" || response.basis === "bundled" ? ` (${response.basis} evidence does not establish compatibility)` : ""}`,
+      message: `${gate.id}: unknown compatibility ${policyOutcomes[policy].label}: ${unknownReason(response, gate, projectVersion, dependencyVersion)}`,
       response,
     };
   }
@@ -228,6 +241,34 @@ async function evaluateCheck(
     message: `${gate.project.id} ${projectVersion} ${response.basis === "tested" ? "was tested with" : "supports"} ${gate.dependency.id} ${dependencyVersion}`,
     response,
   };
+}
+
+function unknownReason(
+  response: CompatibilityCheckResponse,
+  gate: GateDefinition,
+  projectVersion: string,
+  dependencyVersion: string,
+): string {
+  switch (response.reason) {
+    case "project-not-found":
+      return `project ${gate.project.id} is not in the catalog`;
+    case "project-version-not-found":
+      return `no catalog coverage for ${gate.project.id} ${projectVersion}`;
+    case "dependency-not-found":
+      return `dependency ${gate.dependency.id} is not documented for ${gate.project.id} ${projectVersion}`;
+    case "dependency-version-not-covered":
+      return `${gate.dependency.id} ${dependencyVersion} is outside documented coverage for ${gate.project.id} ${projectVersion}`;
+    case "recommendation-only":
+      return "recommended evidence does not establish compatibility";
+    case "bundle-only":
+      return "bundled evidence does not establish compatibility";
+    case "explicitly-unknown":
+      return "upstream explicitly documents this compatibility as unknown";
+    default:
+      return response.basis === "recommended" || response.basis === "bundled"
+        ? `${response.basis} evidence does not establish compatibility`
+        : `no matching evidence for ${gate.project.id} ${projectVersion} / ${gate.dependency.id} ${dependencyVersion}`;
+  }
 }
 
 function gateConfigurationError(

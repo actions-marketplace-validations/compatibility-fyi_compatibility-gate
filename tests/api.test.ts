@@ -91,6 +91,8 @@ describe("CompatibilityApiClient", () => {
   );
 
   it.each([
+    [{ reason: "anything" }, "reason must identify"],
+    [{ reason: "project-not-found" }, "only valid for unknown"],
     [{ compatible: "maybe" }, "compatible must be"],
     [{ version: "1.29" }, "did not match"],
     [{ basis: "default" }, "basis must be"],
@@ -118,6 +120,31 @@ describe("CompatibilityApiClient", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     },
   );
+
+  it.each([
+    "project-not-found",
+    "project-version-not-found",
+    "dependency-not-found",
+    "dependency-version-not-covered",
+    "recommendation-only",
+    "bundle-only",
+    "explicitly-unknown",
+  ])("preserves the unknown diagnostic %s", async (reason) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          ...evidence,
+          compatible: "unknown",
+          reason,
+        }),
+      ),
+    );
+    await expect(client.check(request)).resolves.toMatchObject({
+      compatible: "unknown",
+      reason,
+    });
+  });
 
   it("retries transient server failures", async () => {
     const fetchMock = vi

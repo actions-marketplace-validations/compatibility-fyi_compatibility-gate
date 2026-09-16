@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0 - 2026-09-16
+
+- Resolve exact Helm chart versions to application versions using published repository metadata.
+- Share bounded, timed index downloads across selectors and branches; fail closed on missing or
+  ambiguous application versions.
+- Explain unknown results using the API's optional reason field while supporting older endpoints.
+- Keep temporary test repositories independent of local commit-signing configuration.
+
 ## 1.2.0 - 2026-08-25
 
 - Add `warn` policy handling for unknown compatibility and API errors.

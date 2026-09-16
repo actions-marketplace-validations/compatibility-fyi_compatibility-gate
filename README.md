@@ -90,8 +90,8 @@ CloudNativePG `Cluster`, extracts PostgreSQL versions from `spec.imageName`, and
 state that would exist after merging the branch.
 
 Your project selector must identify the version actually deployed. If a Helm chart version differs
-from its application version, select an explicit application/image version or another source that
-tracks the deployed project release.
+from its application version, use the [Helm selector](#value-selectors) to resolve the chart’s
+`appVersion`, or select an explicit application/image version.
 
 ### Combine multiple compatibility axes
 
@@ -331,12 +331,13 @@ version.
 
 Both `project.version` and `dependency.versions` use the same selector shape:
 
-| Field      | Required | Description                                                                   |
-| ---------- | -------- | ----------------------------------------------------------------------------- |
-| `files`    | yes      | One or more Minimatch globs evaluated against repository-relative file paths. |
-| `document` | no       | Dot-path/value pairs used to select documents from multi-document YAML files. |
-| `value`    | yes      | Dot path to the scalar version value. Numeric array indexes are supported.    |
-| `extract`  | no       | Regular expression with a named `version` group or first capture group.       |
+| Field      | Required | Description                                                                                 |
+| ---------- | -------- | ------------------------------------------------------------------------------------------- |
+| `files`    | yes      | One or more Minimatch globs evaluated against repository-relative file paths.               |
+| `document` | no       | Dot-path/value pairs used to select documents from multi-document YAML files.               |
+| `value`    | yes      | Dot path to the scalar version value. Numeric array indexes are supported.                  |
+| `extract`  | no       | Regular expression with a named `version` group or first capture group.                     |
+| `helm`     | no       | Resolve an exact chart version to its `appVersion` using a static `repository` and `chart`. |
 
 Examples:
 
@@ -353,6 +354,33 @@ document:
   kind: HelmRelease
   metadata.name: cloudnative-pg
 ```
+
+To resolve a Flux HelmRelease’s chart version to the application version used by the compatibility
+API, add a `helm` source to the selector:
+
+```yaml
+files:
+  - apps/gitlab/helmrelease.yaml
+document:
+  kind: HelmRelease
+  metadata.name: gitlab
+value: spec.chart.spec.version
+helm:
+  repository: https://charts.gitlab.io
+  chart: gitlab
+```
+
+The selector reads an exact chart version such as `10.3.2` and looks up that entry’s `appVersion`
+in the repository’s `index.yaml`. If `extract` is present, it runs before the lookup. Repository and
+chart names come from the gate configuration on the default branch, rather than the selected
+manifest. Both project and dependency selectors support this option. Use it when the chart’s
+`appVersion` represents the deployed application; explicit image overrides require an image selector.
+
+Repositories must be public HTTPS Helm repositories without credentials, query strings, or fragments.
+OCI registries and redirects are not supported. Each repository index is fetched once per run and
+shared across selectors and branches, with a 15-second timeout and a 32 MiB response limit. The gate
+never downloads or executes a chart. Chart ranges and partial versions are rejected; missing, empty,
+or conflicting `appVersion` metadata blocks evaluation without a fallback to another chart version.
 
 Selectors are limited to 256 matching files and 100 unique values per branch evaluation.
 
@@ -516,6 +544,12 @@ Renovate branch. Check `files`, `document`, `value`, and `extract` against the r
 selector.
 
 ### Compatibility is unknown
+
+The API's optional `reason` field distinguishes missing project IDs, missing project
+versions, missing dependency keys, uncovered dependency versions, recommendation-only
+or bundle-only evidence, and an explicitly unknown upstream result. The gate includes
+that distinction in its status description and detailed summary. Older API endpoints
+without `reason` remain supported and receive a generic diagnostic.
 
 Inspect the project document and dependency key:
 

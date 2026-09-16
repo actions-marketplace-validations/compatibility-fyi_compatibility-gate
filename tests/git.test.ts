@@ -62,6 +62,7 @@ function createRepository(): { repository: string; sha: string } {
   git(repository, ["init", "--quiet"]);
   git(repository, ["config", "user.email", "test@compatibility.fyi"]);
   git(repository, ["config", "user.name", "compatibility.fyi tests"]);
+  git(repository, ["config", "commit.gpgsign", "false"]);
   writeFileSync(path.join(repository, "config.yaml"), "version: 1\n");
   git(repository, ["add", "config.yaml"]);
   git(repository, ["commit", "--quiet", "-m", "test fixture"]);

@@ -38,6 +38,47 @@ function response(
 }
 
 describe("evaluateBranch", () => {
+  it.each([
+    ["project-not-found", "project cloudnativepg is not in the catalog"],
+    [
+      "project-version-not-found",
+      "no catalog coverage for cloudnativepg v1.27.0",
+    ],
+    ["dependency-not-found", "dependency postgresql is not documented"],
+    [
+      "dependency-version-not-covered",
+      "postgresql 18.4 is outside documented coverage",
+    ],
+    [
+      "recommendation-only",
+      "recommended evidence does not establish compatibility",
+    ],
+    ["bundle-only", "bundled evidence does not establish compatibility"],
+    [
+      "explicitly-unknown",
+      "upstream explicitly documents this compatibility as unknown",
+    ],
+  ] as const)(
+    "explains %s without weakening the blocking policy",
+    async (reason, message) => {
+      const checker = {
+        check: vi
+          .fn()
+          .mockResolvedValue(response({ compatible: "unknown", reason })),
+      };
+      const result = await evaluateBranch(
+        "renovate/postgresql",
+        "head",
+        "base",
+        repository(operator127, "17.10", operator127, "18.4"),
+        parseConfiguration(configurationYaml),
+        checker,
+      );
+      expect(result.state).toBe("error");
+      expect(result.description).toContain(message);
+    },
+  );
+
   it.each(["recommended", "bundled"] as const)(
     "blocks unknown %s evidence even when its range matches",
     async (basis) => {

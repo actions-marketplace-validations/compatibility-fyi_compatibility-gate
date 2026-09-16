@@ -218,6 +218,7 @@ function createRepositoryFixture(
   git(root, ["clone", "--quiet", remote, repository]);
   git(repository, ["config", "user.email", "test@compatibility.fyi"]);
   git(repository, ["config", "user.name", "compatibility.fyi tests"]);
+  git(repository, ["config", "commit.gpgsign", "false"]);
   git(repository, ["checkout", "--quiet", "-b", "master"]);
 
   mkdirSync(path.join(repository, ".gitlab"), { recursive: true });
