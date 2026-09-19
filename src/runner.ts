@@ -2,12 +2,14 @@ import { CompatibilityApiClient } from "./api.js";
 import { parseConfiguration, validateApiUrl } from "./config.js";
 import { evaluateBranch, type CompatibilityChecker } from "./evaluate.js";
 import { GitRepositoryReader } from "./git.js";
+import { HelmAppVersionResolver } from "./helm.js";
 import type { BranchEvaluation, GateConfiguration } from "./types.js";
 
 export interface PreparedGate {
   baseRef: string;
   configuration: GateConfiguration;
   checker: CompatibilityChecker;
+  helmResolver: HelmAppVersionResolver;
 }
 
 export async function prepareGate(
@@ -28,6 +30,7 @@ export async function prepareGate(
   return {
     baseRef,
     configuration,
+    helmResolver: new HelmAppVersionResolver(),
     checker: new CompatibilityApiClient(
       configuration.api.url,
       configuration.api.timeoutMs,
@@ -51,6 +54,8 @@ export async function evaluateConfiguredBranch(
       reader,
       prepared.configuration,
       prepared.checker,
+      new Date(),
+      prepared.helmResolver,
     );
   } catch (error) {
     return {

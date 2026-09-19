@@ -1,5 +1,15 @@
 export type CompatibilityStatus = "compatible" | "incompatible" | "unknown";
+export type CompatibilityBasis =
+  "supported" | "tested" | "recommended" | "bundled";
 export type ConfidenceLevel = "low" | "medium" | "high";
+export type CompatibilityUnknownReason =
+  | "project-not-found"
+  | "project-version-not-found"
+  | "dependency-not-found"
+  | "dependency-version-not-covered"
+  | "recommendation-only"
+  | "bundle-only"
+  | "explicitly-unknown";
 export type GatePolicy = "allow" | "warn" | "block";
 export type CommitState = "error" | "failure" | "pending" | "success";
 export type DecisionState = Exclude<CommitState, "pending"> | "warning";
@@ -16,7 +26,10 @@ export interface CompatibilityCheckResponse {
   dependency: string;
   dependencyVersion: string;
   compatible: CompatibilityStatus;
+  reason?: CompatibilityUnknownReason | null;
   matchedRange: string | null;
+  matchedConstraint?: "same-version" | null;
+  basis?: CompatibilityBasis | null;
   relationship: string | null;
   confidence: ConfidenceLevel;
   lastVerified: string | null;
@@ -24,11 +37,17 @@ export interface CompatibilityCheckResponse {
   sources: CompatibilitySource[];
 }
 
+export interface HelmChartSource {
+  repository: string;
+  chart: string;
+}
+
 export interface ValueSelector {
   files: string[];
   document?: Record<string, string | number | boolean>;
   value: string;
   extract?: string;
+  helm?: HelmChartSource;
 }
 
 export interface GatePolicyConfig {

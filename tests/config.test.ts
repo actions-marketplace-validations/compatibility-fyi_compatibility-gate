@@ -89,4 +89,57 @@ api:
       ),
     ).toThrow("must be a valid regular expression");
   });
+
+  it.each(["localhost", "127.0.0.1", "[::1]"])(
+    "allows HTTP on loopback host %s",
+    (host) => {
+      const url = `http://${host}:3000/check`;
+      const configuration = parseConfiguration(
+        `${configurationYaml}\napi:\n  url: ${url}\n`,
+      );
+      expect(configuration.api.url).toBe(url);
+    },
+  );
+
+  it("preserves explicit prototype-named document filters", () => {
+    const configuration = parseConfiguration(
+      configurationYaml.replace("kind: GitRepository", "__proto__: wanted"),
+    );
+    const filter = configuration.gates[0]!.project.version.document!;
+    expect(Object.hasOwn(filter, "__proto__")).toBe(true);
+    expect(filter.__proto__).toBe("wanted");
+  });
+  it("accepts a static Helm source and canonicalizes its repository URL", () => {
+    const configuration = parseConfiguration(
+      configurationYaml.replace(
+        "value: spec.ref.tag",
+        'value: spec.ref.tag\n        helm: { repository: "https://CHARTS.gitlab.io/", chart: gitlab }',
+      ),
+    );
+    expect(configuration.gates[0]!.project.version.helm).toEqual({
+      repository: "https://charts.gitlab.io",
+      chart: "gitlab",
+    });
+  });
+
+  it.each([
+    '{ repository: "http://charts.gitlab.io", chart: gitlab }',
+    '{ repository: "oci://charts.gitlab.io", chart: gitlab }',
+    '{ repository: "https://user:secret@charts.gitlab.io", chart: gitlab }',
+    '{ repository: "https://charts.gitlab.io?token=secret", chart: gitlab }',
+    '{ repository: "https://charts.gitlab.io#fragment", chart: gitlab }',
+    '{ repository: "https://charts.gitlab.io", chart: "../gitlab" }',
+    '{ repository: "https://charts.gitlab.io" }',
+    '{ repository: "https://charts.gitlab.io", chart: gitlab, version: latest }',
+    "null",
+  ])("rejects invalid Helm configuration %s", (helm) => {
+    expect(() =>
+      parseConfiguration(
+        configurationYaml.replace(
+          "value: spec.ref.tag",
+          `value: spec.ref.tag\n        helm: ${helm}`,
+        ),
+      ),
+    ).toThrow(".helm");
+  });
 });

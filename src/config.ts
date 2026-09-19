@@ -6,6 +6,7 @@ import type {
   GateDefinition,
   GatePolicy,
   GatePolicyConfig,
+  HelmChartSource,
   ValueSelector,
 } from "./types.js";
 
@@ -107,7 +108,7 @@ export function validateApiUrl(value: string): void {
 
   const localHttp =
     url.protocol === "http:" &&
-    ["127.0.0.1", "localhost", "::1"].includes(url.hostname);
+    ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
   if (url.protocol !== "https:" && !localHttp) {
     throw new Error(
       "configuration.api.url must use HTTPS unless it targets localhost",
@@ -149,7 +150,11 @@ function parseGate(
 
 function parseSelector(value: unknown, path: string): ValueSelector {
   const selector = asRecord(value, path);
-  assertKnownKeys(selector, ["files", "document", "value", "extract"], path);
+  assertKnownKeys(
+    selector,
+    ["files", "document", "value", "extract", "helm"],
+    path,
+  );
 
   const files = requiredStringArray(selector.files, `${path}.files`);
   const valuePath = requiredString(selector.value, `${path}.value`);
@@ -170,12 +175,48 @@ function parseSelector(value: unknown, path: string): ValueSelector {
   }
 
   const document = parseDocumentSelector(selector.document, `${path}.document`);
+  const helm = parseHelmSource(selector.helm, `${path}.helm`);
   return {
     files,
     value: valuePath,
     ...(document ? { document } : {}),
     ...(extract ? { extract } : {}),
+    ...(helm ? { helm } : {}),
   };
+}
+
+function parseHelmSource(
+  value: unknown,
+  path: string,
+): HelmChartSource | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const source = asRecord(value, path);
+  assertKnownKeys(source, ["repository", "chart"], path);
+  const repository = requiredString(source.repository, `${path}.repository`);
+  let url: URL;
+  try {
+    url = new URL(repository);
+  } catch {
+    throw new Error(`${path}.repository must be a valid HTTPS URL`);
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    repository.includes("?") ||
+    repository.includes("#")
+  ) {
+    throw new Error(
+      `${path}.repository must use HTTPS without credentials, query, or fragment`,
+    );
+  }
+  const chart = requiredString(source.chart, `${path}.chart`);
+  if (!/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/.test(chart)) {
+    throw new Error(`${path}.chart must be a chart name, not a path or URL`);
+  }
+  return { repository: url.toString().replace(/\/+$/, ""), chart };
 }
 
 function parseDocumentSelector(
@@ -191,7 +232,6 @@ function parseDocumentSelector(
     throw new Error(`${path} must contain at least one field`);
   }
 
-  const parsed: Record<string, string | number | boolean> = {};
   for (const [key, expected] of Object.entries(document)) {
     if (!key || key.split(".").some((part) => part.length === 0)) {
       throw new Error(`${path} keys must be dot-separated object paths`);
@@ -199,9 +239,8 @@ function parseDocumentSelector(
     if (!["string", "number", "boolean"].includes(typeof expected)) {
       throw new Error(`${path}.${key} must be a string, number, or boolean`);
     }
-    parsed[key] = expected as string | number | boolean;
   }
-  return parsed;
+  return document as Record<string, string | number | boolean>;
 }
 
 function parsePolicy(

@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { HelmAppVersionResolver } from "../src/helm.js";
 import { resolveSelector } from "../src/selectors.js";
-import { cluster } from "./helpers.js";
-import { MemoryRepository } from "./helpers.js";
+import { cluster, MemoryRepository } from "./helpers.js";
 
 describe("resolveSelector", () => {
   it("selects matching YAML documents and extracts image versions", async () => {
@@ -56,5 +56,54 @@ describe("resolveSelector", () => {
         extract: "18\\.4$",
       }),
     ).rejects.toThrow("must provide a named version group or capture");
+  });
+
+  it.each(["toString", "constructor", "__proto__"])(
+    "selects only an explicit document property named %s",
+    async (property) => {
+      const reader = new MemoryRepository({
+        head: { "versions.yaml": `{}\n---\n${property}: 1.2.3\n` },
+      });
+      await expect(
+        resolveSelector(reader, "head", {
+          files: ["versions.yaml"],
+          value: property,
+        }),
+      ).resolves.toEqual(["1.2.3"]);
+    },
+  );
+  it("resolves extracted base and head chart versions through a shared Helm index", async () => {
+    const reader = new MemoryRepository({
+      base: { "release.yaml": "chart: chart-10.3.1" },
+      head: { "release.yaml": "chart: chart-10.3.2\n---\nchart: chart-10.3.3" },
+    });
+    const fetchImplementation = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          apiVersion: "v1",
+          entries: {
+            gitlab: [
+              { version: "10.3.1", appVersion: "19.3.1" },
+              { version: "10.3.2", appVersion: "19.3.2" },
+              { version: "10.3.3", appVersion: "19.3.2" },
+            ],
+          },
+        }),
+      ),
+    );
+    const resolver = new HelmAppVersionResolver(fetchImplementation);
+    const selector = {
+      files: ["release.yaml"],
+      value: "chart",
+      extract: "^chart-(?<version>.*)$",
+      helm: { repository: "https://charts.gitlab.io", chart: "gitlab" },
+    };
+    await expect(
+      Promise.all([
+        resolveSelector(reader, "base", selector, resolver),
+        resolveSelector(reader, "head", selector, resolver),
+      ]),
+    ).resolves.toEqual([["19.3.1"], ["19.3.2"]]);
+    expect(fetchImplementation).toHaveBeenCalledOnce();
   });
 });

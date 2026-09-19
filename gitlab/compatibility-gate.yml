@@ -1,11 +1,13 @@
 ---
 variables:
-  COMPATIBILITY_FYI_IMAGE: "ghcr.io/compatibility-fyi/compatibility-gate:v1.2.0"
+  COMPATIBILITY_FYI_IMAGE: "ghcr.io/compatibility-fyi/compatibility-gate:v1.3.0"
   COMPATIBILITY_FYI_BRANCH_PATTERN: "renovate/**"
   COMPATIBILITY_FYI_BRANCH_REGEX: "/^renovate\\//"
 
 "compatibility.fyi/gate":
   stage: .pre
+  inherit:
+    default: [tags]
   image:
     name: "$COMPATIBILITY_FYI_IMAGE"
     entrypoint: [""]
@@ -25,6 +27,8 @@ variables:
 
 "compatibility.fyi/recheck":
   stage: .pre
+  inherit:
+    default: [tags]
   image:
     name: "$COMPATIBILITY_FYI_IMAGE"
     entrypoint: [""]

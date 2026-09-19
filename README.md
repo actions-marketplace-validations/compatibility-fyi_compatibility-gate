@@ -3,7 +3,7 @@
 [![CI](https://github.com/compatibility-fyi/compatibility-gate/actions/workflows/ci.yml/badge.svg)](https://github.com/compatibility-fyi/compatibility-gate/actions/workflows/ci.yml)
 
 Prevent Renovate from opening dependency pull requests or merge requests until the proposed
-repository state is supported by source-backed [compatibility.fyi](https://compatibility.fyi)
+repository state passes checks against source-backed [compatibility.fyi](https://compatibility.fyi)
 metadata. The repository provides a GitHub Action and a GitHub-hosted GitLab CI remote template.
 
 The gate is designed for relationships Renovate cannot evaluate by itself, such as:
@@ -90,8 +90,8 @@ CloudNativePG `Cluster`, extracts PostgreSQL versions from `spec.imageName`, and
 state that would exist after merging the branch.
 
 Your project selector must identify the version actually deployed. If a Helm chart version differs
-from its application version, select an explicit application/image version or another source that
-tracks the deployed project release.
+from its application version, use the [Helm selector](#value-selectors) to resolve the chart’s
+`appVersion`, or select an explicit application/image version.
 
 ### Combine multiple compatibility axes
 
@@ -100,11 +100,30 @@ one gate per relationship. The action evaluates every applicable gate against th
 repository state and publishes one combined commit status. Every applicable gate and every selected
 dependency version must pass.
 
-For example, an Advanced Cluster Management update that must work with Multicluster Engine, its
-management-cluster OpenShift version, and its hosted-cluster OpenShift version uses three gates with
-the same project selector and separate dependency selectors. A grouped Renovate branch is allowed
-only when all three relationships pass. The action does not need a separate multi-dependency API
-endpoint for this behavior.
+For example, a CloudNativePG update that must work with both the declared Kubernetes version and
+PostgreSQL operand versions uses two gates with the same project selector. Use `kubernetes` and
+`postgresql` as the separate dependency keys. A grouped Renovate branch is allowed only when both
+relationships pass. The action does not need a separate multi-dependency API endpoint for this
+behavior.
+
+### Understand the evidence
+
+The API distinguishes four evidence kinds through its `basis` field:
+
+- `supported`: upstream documents support for the requested combination.
+- `tested`: upstream tests the combination; this is distinct from a vendor support guarantee.
+- `recommended`: upstream recommends an alignment, without establishing compatibility.
+- `bundled`: upstream ships the versions together, without establishing general compatibility.
+
+Matching supported or tested evidence can pass the gate, subject to confidence and age policies.
+Recommended and bundled evidence returns `unknown` even when a range or exact-version constraint
+matches. Missing coverage also returns `unknown`; only explicit upstream incompatibility produces
+`incompatible`. See the [API result semantics](https://compatibility.fyi/docs/api/#semantics).
+
+For example, ACM's bundled Multicluster Engine mapping is useful packaging evidence, but cannot
+pass the default unknown-blocking policy. An `unknown: allow` or `warn` policy is a deliberate
+exception, not a compatibility confirmation. Missing project/dependency keys can also mean a matrix
+was withdrawn or renamed; inspect the current API catalog before configuring a gate.
 
 ### 2. Add the workflow
 
@@ -140,6 +159,12 @@ For maximum supply-chain safety, replace `v1` with the full commit SHA of the re
 The scheduled trigger reevaluates existing Renovate branches when compatibility.fyi metadata
 changes without a new commit on those branches.
 
+The reusable workflow runs its own action revision using GitHub's
+[self-repository reference](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsuses),
+so pinning the workflow also pins the action it executes. This requires GitHub.com and runner
+2.336.0 or newer, which GitHub-hosted runners provide. For GitHub Enterprise Server, use the direct
+action form with a runner that supports Node.js 24 actions.
+
 ### 3. Tell Renovate to wait
 
 Apply `prCreation: "status-success"` globally:
@@ -172,7 +197,9 @@ a successful “not applicable” gate status.
 ## GitLab quickstart
 
 GitLab consumes a public template directly from this GitHub repository with `include:remote`. It is
-not a GitLab CI/CD Catalog component and does not require a mirrored GitLab project.
+not a GitLab CI/CD Catalog component and does not require a mirrored GitLab project. The pinned
+include below requires GitLab 17.9 or newer for
+[`include:integrity`](https://docs.gitlab.com/ci/yaml/#includeintegrity).
 
 ### 1. Add the gate configuration
 
@@ -186,8 +213,8 @@ Add this to `.gitlab-ci.yml`:
 ```yaml
 ---
 include:
-  - remote: "https://raw.githubusercontent.com/compatibility-fyi/compatibility-gate/3fb73b30d2eb3a103c4304bcca6e8e90930e0c63/gitlab/compatibility-gate.yml"
-    integrity: "sha256-DRVZLG5j09pK0hD0dlQKzSfYBddWosQUMD8/cYfxu9A="
+  - remote: "https://raw.githubusercontent.com/compatibility-fyi/compatibility-gate/81b179b1bc4d88161603ed9ad1acda6920e9a54a/gitlab/compatibility-gate.yml"
+    integrity: "sha256-eih2hilPDzg6HGqq0YjCQ5jUXJ1a1CEDwX3Wip/hAz0="
 ```
 
 The released README contains the exact immutable commit and SHA-256 integrity value. Do not replace
@@ -200,6 +227,9 @@ The template adds two `.pre` jobs:
   allow/warn/block policy when compatibility is unknown or cannot be checked;
 - `compatibility.fyi/recheck` runs only in a scheduled default-branch pipeline and retriggers the
   existing Renovate branch pipelines.
+
+Both jobs inherit only default runner tags, so consumer setup scripts, services, hooks, and caches
+are not applied to the gate. Global variables remain available for the configuration below.
 
 GitLab does not create a pipeline that contains only jobs in the special `.pre` and `.post` stages.
 Most projects already have an ordinary build, test, or deploy job, which satisfies this requirement.
@@ -301,12 +331,13 @@ version.
 
 Both `project.version` and `dependency.versions` use the same selector shape:
 
-| Field      | Required | Description                                                                   |
-| ---------- | -------- | ----------------------------------------------------------------------------- |
-| `files`    | yes      | One or more Minimatch globs evaluated against repository-relative file paths. |
-| `document` | no       | Dot-path/value pairs used to select documents from multi-document YAML files. |
-| `value`    | yes      | Dot path to the scalar version value. Numeric array indexes are supported.    |
-| `extract`  | no       | Regular expression with a named `version` group or first capture group.       |
+| Field      | Required | Description                                                                                 |
+| ---------- | -------- | ------------------------------------------------------------------------------------------- |
+| `files`    | yes      | One or more Minimatch globs evaluated against repository-relative file paths.               |
+| `document` | no       | Dot-path/value pairs used to select documents from multi-document YAML files.               |
+| `value`    | yes      | Dot path to the scalar version value. Numeric array indexes are supported.                  |
+| `extract`  | no       | Regular expression with a named `version` group or first capture group.                     |
+| `helm`     | no       | Resolve an exact chart version to its `appVersion` using a static `repository` and `chart`. |
 
 Examples:
 
@@ -323,6 +354,33 @@ document:
   kind: HelmRelease
   metadata.name: cloudnative-pg
 ```
+
+To resolve a Flux HelmRelease’s chart version to the application version used by the compatibility
+API, add a `helm` source to the selector:
+
+```yaml
+files:
+  - apps/gitlab/helmrelease.yaml
+document:
+  kind: HelmRelease
+  metadata.name: gitlab
+value: spec.chart.spec.version
+helm:
+  repository: https://charts.gitlab.io
+  chart: gitlab
+```
+
+The selector reads an exact chart version such as `10.3.2` and looks up that entry’s `appVersion`
+in the repository’s `index.yaml`. If `extract` is present, it runs before the lookup. Repository and
+chart names come from the gate configuration on the default branch, rather than the selected
+manifest. Both project and dependency selectors support this option. Use it when the chart’s
+`appVersion` represents the deployed application; explicit image overrides require an image selector.
+
+Repositories must be public HTTPS Helm repositories without credentials, query strings, or fragments.
+OCI registries and redirects are not supported. Each repository index is fetched once per run and
+shared across selectors and branches, with a 15-second timeout and a 32 MiB response limit. The gate
+never downloads or executes a chart. Chart ranges and partial versions are rejected; missing, empty,
+or conflicting `appVersion` metadata blocks evaluation without a fallback to another chart version.
 
 Selectors are limited to 256 matching files and 100 unique values per branch evaluation.
 
@@ -408,7 +466,7 @@ Every run writes a GitHub Actions step summary containing:
 
 - the branch and gate;
 - project and dependency versions;
-- compatibility result and matched range;
+- compatibility result, evidence basis, and matched range or exact-version constraint;
 - confidence and `lastVerified` date;
 - links to primary sources returned by compatibility.fyi.
 
@@ -487,14 +545,22 @@ selector.
 
 ### Compatibility is unknown
 
+The API's optional `reason` field distinguishes missing project IDs, missing project
+versions, missing dependency keys, uncovered dependency versions, recommendation-only
+or bundle-only evidence, and an explicitly unknown upstream result. The gate includes
+that distinction in its status description and detailed summary. Older API endpoints
+without `reason` remain supported and receive a generic diagnostic.
+
 Inspect the project document and dependency key:
 
 ```sh
 curl https://compatibility.fyi/api/v1/projects/cloudnativepg
 ```
 
-Do not change `unknown` to `allow` merely to suppress missing metadata. Prefer contributing
-source-backed compatibility data.
+Check whether the result is uncovered, recommended, or bundled. A matching range does not by itself
+establish compatibility. Inspect the current project index if a project was renamed or a matrix was
+withdrawn. Do not change `unknown` to `allow` merely to suppress missing metadata; prefer contributing
+source-backed support or test evidence.
 
 ## Development
 
